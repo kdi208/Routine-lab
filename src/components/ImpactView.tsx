@@ -11,13 +11,13 @@ import {
     type ModelState,
     type Routine,
 } from "@/lib/planner";
-import { GOAL_MODES, SITE_LABEL, SITES, type GoalMode, type SiteGoal, type SiteId } from "@/lib/sites";
+import { GOAL_MODES, SESSION_SET_CAP, SET_PEAK, SITE_LABEL, SITES, type GoalMode, type SiteGoal, type SiteId } from "@/lib/sites";
 import { signedLength, type Unit } from "@/lib/units";
 import { BodyFigure, type FigureValue } from "./BodyFigure";
 
 const GOAL_LABEL: Record<GoalMode, string> = { grow: "Grow", hold: "Hold", shrink: "Shrink", ignore: "Off" };
 
-/** Changes below this, in inches per block, are shown as no change. */
+/** Changes below this, in inches per 4 weeks, are shown as no change. */
 const NOISE = 0.005;
 
 type Props = {
@@ -51,6 +51,7 @@ export function ImpactView({ model, active, activeSince, draft, goals, unit, onG
     const impacts = useMemo(() => changeImpacts(model.fit, active, draft, goals), [model.fit, active, draft, goals]);
     const recommendation = useMemo(() => recommendFor(model.fit, draft, goals), [model.fit, draft, goals]);
     const draftDoses = useMemo(() => routineDoses(draft), [draft]);
+    const longDays = draft.days.filter((d) => d.exercises.reduce((n, e) => n + e.sets, 0) > SESSION_SET_CAP);
 
     const shownRows = focus != null && impacts[focus] ? impacts[focus].sites : total;
     const figure: FigureValue = Object.fromEntries(shownRows.map((r) => [r.site, r.change]));
@@ -79,6 +80,12 @@ export function ImpactView({ model, active, activeSince, draft, goals, unit, onG
                         {line}
                     </p>
                 ))}
+                {longDays.length > 0 && (
+                    <p className="text-accent">
+                        {longDays.map((d) => d.name).join(", ")} {longDays.length === 1 ? "runs" : "run"} past {SESSION_SET_CAP} working
+                        sets. Every body part trained that day pays a fatigue cost.
+                    </p>
+                )}
                 {model.unknownExercises.length > 0 && (
                     <p className="opacity-60">Not credited to any tape: {model.unknownExercises.join(", ")}.</p>
                 )}
@@ -90,7 +97,7 @@ export function ImpactView({ model, active, activeSince, draft, goals, unit, onG
                         {focus != null && impacts[focus] ? impacts[focus].change.label : "Your edits, all together"}
                     </h2>
                     <p className="text-[11px] font-bold opacity-70">
-                        Predicted tape change per measurement block vs. the routine in force
+                        Predicted tape change per 4 weeks vs. the routine in force
                         {activeSince ? ` since ${formatTapeDate(activeSince)}` : ""}.
                     </p>
                 </header>
@@ -128,6 +135,7 @@ export function ImpactView({ model, active, activeSince, draft, goals, unit, onG
                                     <div className="flex justify-between text-[10px] font-bold opacity-60">
                                         <span>
                                             {row.baseSets.toFixed(1)} → {row.nextSets.toFixed(1)} direct sets/wk
+                                            {row.nextSets > SET_PEAK && <span className="text-accent"> · past {SET_PEAK}, extra sets cost</span>}
                                         </span>
                                         <span>goal: {GOAL_LABEL[goal.mode]}</span>
                                     </div>
@@ -147,7 +155,12 @@ export function ImpactView({ model, active, activeSince, draft, goals, unit, onG
 
             <section className="border-heavy">
                 <header className="p-3 bg-black text-white flex items-baseline justify-between">
-                    <h2 className="font-black uppercase tracking-tight">Each change on its own</h2>
+                    <div>
+                        <h2 className="font-black uppercase tracking-tight">Each change on its own</h2>
+                        <p className="text-[11px] font-bold opacity-70">
+                            Changes can interact: stacked volume on one body part adds up to less than the parts.
+                        </p>
+                    </div>
                     {focus != null && (
                         <button type="button" onClick={() => setFocus(null)} className="text-[11px] font-black uppercase underline">
                             Show all

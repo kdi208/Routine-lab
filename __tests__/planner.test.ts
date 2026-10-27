@@ -31,6 +31,13 @@ function routine(): Routine {
     };
 }
 
+/** Arms once a week: 6 direct sets, well under the peak. */
+function weekly(): Routine {
+    const r = routine();
+    const rest = (i: number) => ({ id: `r${i}`, name: "Rest", exercises: [] });
+    return { days: [r.days[0], ...[1, 2, 3, 4, 5, 6].map(rest)] };
+}
+
 function tape(date: string, arms: number, weight = 180): TapeRow {
     return {
         date,
@@ -53,16 +60,32 @@ describe("exercise names", () => {
     it("maps every starter exercise onto a tape", () => {
         for (const day of starterRoutine().days) {
             for (const e of day.exercises) {
-                expect([e.name, attributionFor(e.name).kind]).toEqual([e.name, "mapped"]);
+                expect([e.name, attributionFor(e).kind]).toEqual([e.name, "mapped"]);
             }
         }
     });
 
     it("reads free-typed names the way the tracker reads ids", () => {
-        expect(attributionFor("Romanian Deadlift").primary).toEqual({ thighs: 1 });
-        expect(attributionFor("Lat Pulldown").primary).toEqual({ chest: 1 });
-        expect(attributionFor("lateral raise").primary).toEqual({ shoulders: 1 });
-        expect(attributionFor("Juggling").kind).toBe("unknown");
+        expect(attributionFor({ name: "Romanian Deadlift" }).primary).toEqual({ thighs: 1 });
+        expect(attributionFor({ name: "Lat Pulldown" }).primary).toEqual({ chest: 1 });
+        expect(attributionFor({ name: "lateral raise" }).primary).toEqual({ shoulders: 1 });
+        expect(attributionFor({ name: "Juggling" }).kind).toBe("unknown");
+        expect(attributionFor({ name: "Pull Ups" }).primary).toEqual({ chest: 1 });
+        expect(attributionFor({ name: "Military Press" }).primary).toEqual({ shoulders: 1 });
+    });
+
+    it("credits an unrecognised name to the tape the visitor picks", () => {
+        expect(attributionFor({ name: "Juggling", target: "forearms" }).primary).toEqual({ forearms: 1 });
+        expect(attributionFor({ name: "Juggling", target: "core" }).kind).toBe("untaped");
+        const base = routine();
+        const next = cloneRoutine(base);
+        next.days[0].exercises.push({ id: "j", name: "Juggling", sets: 3, repLow: 10, repHigh: 10 });
+        const unpicked = forecast(fitResponse([]), base, next).find((r) => r.site === "forearms")!;
+        next.days[0].exercises[2].target = "forearms";
+        const picked = forecast(fitResponse([]), base, next).find((r) => r.site === "forearms")!;
+        expect(unpicked.change).toBe(0);
+        expect(picked.change).toBeGreaterThan(0);
+        expect(diffRoutines(base, next).map((c) => c.kind)).toEqual(["add"]);
     });
 });
 
@@ -96,7 +119,7 @@ describe("routine dose", () => {
 
 describe("what-if", () => {
     it("credits added curl sets to the arm tape and nowhere unrelated", () => {
-        const base = routine();
+        const base = weekly();
         const next = cloneRoutine(base);
         next.days[0].exercises[0].sets = 6;
         const rows = forecast(fitResponse([]), base, next);
@@ -124,6 +147,21 @@ describe("what-if", () => {
         const impacts = changeImpacts(fitResponse([]), base, next, defaultGoals());
         const legs = impacts.find((i) => i.change.kind === "add-day")!;
         expect(legs.sites.find((s) => s.site === "thighs")!.change).toBeGreaterThan(0);
+    });
+
+    it("stops rewarding piled-on volume", () => {
+        const base = weekly();
+        const more = cloneRoutine(base);
+        more.days[0].exercises[0].sets = 6;
+        const huge = cloneRoutine(base);
+        // 30 arm sets in one session: past both the weekly peak and the session cap.
+        huge.days[0].exercises[0].sets = 12;
+        huge.days[0].exercises[1].sets = 6;
+        huge.days[0].exercises.push({ id: "x", name: "Hammer Curl", sets: 12, repLow: 8, repHigh: 12 });
+        const fit = fitResponse([]);
+        const arms = (r: Routine) => forecast(fit, base, r).find((row) => row.site === "arms")!.change;
+        expect(arms(more)).toBeGreaterThan(0);
+        expect(arms(huge)).toBeLessThan(0);
     });
 
     it("reports no changes for an identical routine", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
-import { attributionFor, type PlanDay, type PlanExercise, type Routine } from "@/lib/planner";
+import { attributionFor, TARGETS, type PlanDay, type PlanExercise, type Routine, type Target } from "@/lib/planner";
 import { SITE_LABEL, SITES } from "@/lib/sites";
 import { uid } from "@/lib/store";
 
@@ -73,18 +73,43 @@ function move<T>(list: T[], index: number, by: number): T[] {
     return next;
 }
 
-function SiteChips({ name }: { name: string }) {
-    if (!name.trim()) return null;
-    const a = attributionFor(name);
+function TargetPicker({ exercise, onChange }: { exercise: PlanExercise; onChange: (target: Target | undefined) => void }) {
+    return (
+        <select
+            aria-label="Counts toward"
+            value={exercise.target ?? ""}
+            onChange={(e) => onChange((e.target.value || undefined) as Target | undefined)}
+            className="border border-black text-[10px] font-bold uppercase tracking-wider px-1 py-0.5 bg-white"
+        >
+            <option value="">{exercise.target ? "Match by name" : "Counts toward…"}</option>
+            {TARGETS.map((t) => (
+                <option key={t} value={t}>
+                    {t === "core" ? "Core (no tape)" : SITE_LABEL[t]}
+                </option>
+            ))}
+        </select>
+    );
+}
+
+function SiteChips({ exercise, onTarget }: { exercise: PlanExercise; onTarget: (target: Target | undefined) => void }) {
+    if (!exercise.name.trim() && !exercise.target) return null;
+    const a = attributionFor(exercise);
     if (a.kind === "unknown") {
         return (
-            <span className="text-[10px] font-bold uppercase tracking-wider text-alert">
-                Not recognised: no tape credit
+            <span className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-alert">Not recognised: no tape credit</span>
+                <TargetPicker exercise={exercise} onChange={onTarget} />
             </span>
         );
     }
+    const picker = exercise.target ? <TargetPicker exercise={exercise} onChange={onTarget} /> : null;
     if (a.kind === "untaped") {
-        return <span className="text-[10px] font-bold uppercase tracking-wider opacity-50">No tape site (core / mobility)</span>;
+        return (
+            <span className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-50">No tape site (core / mobility)</span>
+                {picker}
+            </span>
+        );
     }
     return (
         <span className="flex flex-wrap gap-1">
@@ -98,6 +123,7 @@ function SiteChips({ name }: { name: string }) {
                     {SITE_LABEL[s]} ½
                 </span>
             ))}
+            {picker}
         </span>
     );
 }
@@ -207,7 +233,7 @@ function ExerciseRow({
                 />
                 <span className="text-xs font-bold uppercase opacity-60">reps</span>
                 <span className="basis-full">
-                    <SiteChips name={exercise.name} />
+                    <SiteChips exercise={exercise} onTarget={(target) => onChange({ ...exercise, target })} />
                 </span>
             </div>
         </li>

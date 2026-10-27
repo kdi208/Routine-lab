@@ -7,10 +7,15 @@
 import { classifyExercise } from "./exercise-sites";
 import {
     ANCHOR_DRIFT,
+    BLOCK_WEEKS,
     bodyClass,
     LAMBDA_HOLD,
+    OVERREACH,
     PRIORS,
+    SESSION_FATIGUE,
+    SESSION_SET_CAP,
     SET_CEILING,
+    SET_PEAK,
     SIGMA,
     SIGMA_ANCHOR,
     SITE_LABEL,
@@ -54,6 +59,8 @@ export type SiteDose = {
     freshness: number;
     zoneShare: number;
     e1rmSlopePctPerWeek: number;
+    /** Average working sets in the sessions that trained this tape directly. */
+    sessionSets: number;
 };
 
 export type BuiltInterval = {
@@ -77,7 +84,10 @@ export type Observation = {
     freshness: number;
     zoneShare: number;
     e1rmSlopePctPerWeek: number;
+    sessionSets: number;
+    /** Per BLOCK_WEEKS, like deltaTape. */
     deltaBodyweight: number;
+    /** Inches per BLOCK_WEEKS. */
     deltaTape: number;
     sigma: number;
 };
@@ -142,6 +152,7 @@ function emptyDose(): SiteDose {
         freshness: 0.5,
         zoneShare: 0.5,
         e1rmSlopePctPerWeek: 0,
+        sessionSets: 0,
     };
 }
 
@@ -277,6 +288,17 @@ function readFit(theta: number[]): Fit {
     };
 }
 
+/**
+ * Inches per block lost to volume past what a tape or a session can use.
+ * Fixed rather than fitted: a few blocks cannot locate a peak, and without it
+ * the log curve says every added set helps.
+ */
+export function volumeCost(dose: Pick<SiteDose, "directSetsPerWeek" | "sessionSets">): number {
+    const over = Math.max(0, dose.directSetsPerWeek - SET_PEAK);
+    const crowd = Math.max(0, dose.sessionSets - SESSION_SET_CAP);
+    return OVERREACH * over * over + SESSION_FATIGUE * crowd;
+}
+
 export function fitResponse(observations: Observation[]): Fit {
     const precision = Array.from({ length: P }, () => zeros(P));
     const rhs = zeros(P);
@@ -284,9 +306,11 @@ export function fitResponse(observations: Observation[]): Fit {
     for (const obs of observations) {
         const x = design(obs);
         const w = 1 / (obs.sigma * obs.sigma);
+        // The fixed volume cost is an offset: the slopes explain what is left after it.
+        const target = obs.deltaTape + volumeCost(obs);
         for (let i = 0; i < P; i++) {
             if (x[i] === 0) continue;
-            rhs[i] += w * x[i] * obs.deltaTape;
+            rhs[i] += w * x[i] * target;
             for (let j = i; j < P; j++) {
                 if (x[j] === 0) continue;
                 const add = w * x[i] * x[j];
@@ -322,7 +346,8 @@ export function predictDelta(fit: Fit, site: SiteId, dose: SiteDose, deltaBodywe
         fit.bFresh[site] * (dose.freshness - 0.5) +
         fit.bZone[site] * (dose.zoneShare - 0.5) +
         fit.bProg[site] * dose.e1rmSlopePctPerWeek +
-        fit.bBw[cls] * deltaBodyweight
+        fit.bBw[cls] * deltaBodyweight -
+        volumeCost(dose)
     );
 }
 
@@ -413,6 +438,7 @@ export function buildIntervals(tapes: TapeRow[], logs: WorkoutLog[]): {
         const freshN = Object.fromEntries(SITES.map((s) => [s, 0])) as Record<SiteId, number>;
         const zoneN = Object.fromEntries(SITES.map((s) => [s, 0])) as Record<SiteId, number>;
         const directN = Object.fromEntries(SITES.map((s) => [s, 0])) as Record<SiteId, number>;
+        const sessionSetSum = Object.fromEntries(SITES.map((s) => [s, 0])) as Record<SiteId, number>;
         const sessionBest = Object.fromEntries(SITES.map((s) => [s, new Map<string, { week: number; y: number }[]>()])) as Record<
             SiteId,
             Map<string, { week: number; y: number }[]>
@@ -470,7 +496,10 @@ export function buildIntervals(tapes: TapeRow[], logs: WorkoutLog[]): {
                     if (indirect) indirectCounts[site] += indirect;
                 }
             }
-            for (const site of hit) freq[site] += 1;
+            for (const site of hit) {
+                freq[site] += 1;
+                sessionSetSum[site] += working.length;
+            }
         }
 
         const doses = emptyDoses();
@@ -490,6 +519,7 @@ export function buildIntervals(tapes: TapeRow[], logs: WorkoutLog[]): {
                 freshness: freshN[site] > 0 ? freshSum[site] / freshN[site] : 0.5,
                 zoneShare: directN[site] > 0 ? zoneN[site] / directN[site] : 0.5,
                 e1rmSlopePctPerWeek: prog,
+                sessionSets: freq[site] > 0 ? sessionSetSum[site] / freq[site] : 0,
             };
         }
 
@@ -528,6 +558,8 @@ export function buildIntervals(tapes: TapeRow[], logs: WorkoutLog[]): {
 export function observationsFrom(intervals: BuiltInterval[]): Observation[] {
     const rows: Observation[] = [];
     for (const interval of intervals) {
+        // Rates, not raw differences. A short block's rate is noisier, so its sigma grows by the same factor.
+        const scale = BLOCK_WEEKS / interval.weeks;
         for (const site of SITES) {
             const delta = interval.deltaTape[site];
             if (delta == null) continue;
@@ -540,9 +572,10 @@ export function observationsFrom(intervals: BuiltInterval[]): Observation[] {
                 freshness: dose.freshness,
                 zoneShare: dose.zoneShare,
                 e1rmSlopePctPerWeek: dose.e1rmSlopePctPerWeek,
-                deltaBodyweight: interval.deltaBodyweight,
-                deltaTape: delta,
-                sigma: interval.sigma,
+                sessionSets: dose.sessionSets,
+                deltaBodyweight: interval.deltaBodyweight * scale,
+                deltaTape: delta * scale,
+                sigma: interval.sigma * scale,
             });
         }
     }
@@ -592,6 +625,14 @@ function desiredInches(goal: SiteGoal, inches: number): number {
     return 0;
 }
 
+/** Added weekly sets land in the sessions that already train the tape, so those sessions grow too. */
+function addSets(dose: SiteDose, sets: number): Partial<SiteDose> {
+    return {
+        directSetsPerWeek: dose.directSetsPerWeek + sets,
+        sessionSets: dose.sessionSets + sets / Math.max(1, dose.frequencyPerWeek),
+    };
+}
+
 type SiteOption = {
     kind: "zone" | "freshness" | "sets";
     sets?: number;
@@ -624,9 +665,7 @@ export function recommend(
         }
         for (const sets of TRANSFER_STEPS) {
             if (doses[site].directSetsPerWeek + sets > SET_CEILING + 1e-9) continue;
-            const inches = siteInches(fit, doses, site, {
-                directSetsPerWeek: doses[site].directSetsPerWeek + sets,
-            });
+            const inches = siteInches(fit, doses, site, addSets(doses[site], sets));
             const value = desiredInches(goal, inches);
             if (value > 0.02) options.push({ kind: "sets", sets, inches, roi: value / sets });
         }
@@ -655,7 +694,7 @@ export function recommend(
                 ? { zoneShare: 0.7 }
                 : option.kind === "freshness"
                   ? { freshness: 1 }
-                  : { directSetsPerWeek: doses[site].directSetsPerWeek + (option.sets ?? 0) };
+                  : addSets(doses[site], option.sets ?? 0);
         const next = cloneDoses(doses);
         next[site] = { ...next[site], ...patch };
         levers.push(
@@ -671,7 +710,7 @@ export function recommend(
         if (lever.kind === "zone") final[lever.site] = { ...final[lever.site], zoneShare: 0.7 };
         else if (lever.kind === "freshness") final[lever.site] = { ...final[lever.site], freshness: 1 };
         else if (lever.kind === "sets") {
-            final[lever.site] = { ...final[lever.site], directSetsPerWeek: final[lever.site].directSetsPerWeek + lever.sets };
+            final[lever.site] = { ...final[lever.site], ...addSets(final[lever.site], lever.sets) };
         }
     }
     return { levers, gain: utility(fit, final, goals) - utility(fit, doses, goals) };
@@ -687,7 +726,7 @@ function movedCoefficients(fit: Fit): string[] {
     for (const site of SITES) {
         if (Math.abs(fit.a[site]) > 0.5 * PRIORS.interceptSd) {
             lines.push(
-                `${SITE_LABEL[site]} baseline ${signed(fit.a[site], 2)} in/block after sets and scale weight (prior 0).`
+                `${SITE_LABEL[site]} baseline ${signed(fit.a[site], 2)} in per 4 weeks after sets and scale weight (prior 0).`
             );
         }
     }
@@ -762,7 +801,7 @@ export function buildRoutineReport(
         if (delta == null) continue;
         const sets = last.doses[site].directSetsPerWeek;
         lines.push(
-            `${SITE_LABEL[site]} ${signed(delta, 1)} in on the tape, ${sets.toFixed(1)} direct sets/week, baseline ${signed(fit.a[site], 2)} in/block.`
+            `${SITE_LABEL[site]} ${signed(delta, 1)} in on the tape, ${sets.toFixed(1)} direct sets/week, baseline ${signed(fit.a[site], 2)} in per 4 weeks.`
         );
     }
     lines.push("");

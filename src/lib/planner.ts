@@ -24,7 +24,27 @@ export type PlanExercise = {
     sets: number;
     repLow: number;
     repHigh: number;
+    /** Set by the visitor when the name is not recognised. Overrides the name match. */
+    target?: Target;
 };
+
+/** A tape the visitor can credit an exercise to, or core work that moves no tape. */
+export type Target = Exclude<SiteId, "waist"> | "core";
+
+/** One exercise id per target that the matcher credits to that tape alone. */
+const TARGET_ID: Record<Target, string> = {
+    chest: "pec_deck",
+    shoulders: "lateral_raise",
+    arms: "cable_curl",
+    forearms: "wrist_curl",
+    hips: "hip_abduction",
+    thighs: "adductor",
+    calves: "calf_raise",
+    neck: "neck_curl",
+    core: "plank",
+};
+
+export const TARGETS = Object.keys(TARGET_ID) as Target[];
 
 export type PlanDay = {
     id: string;
@@ -54,8 +74,13 @@ export function exerciseKey(name: string): string {
         .replace(/^_+|_+$/g, "");
 }
 
-export function attributionFor(name: string): Attribution {
-    return classifyExercise(exerciseKey(name));
+/** The id the model reads for an exercise: the visitor's override if there is one, else the name. */
+export function modelId(exercise: Pick<PlanExercise, "name" | "target">): string {
+    return exercise.target ? TARGET_ID[exercise.target] : exerciseKey(exercise.name);
+}
+
+export function attributionFor(exercise: Pick<PlanExercise, "name" | "target">): Attribution {
+    return classifyExercise(modelId(exercise));
 }
 
 function addDays(iso: string, days: number): string {
@@ -100,7 +125,7 @@ export function synthesizeLogs(versions: RoutineVersion[], start: string, end: s
                 logs.push({
                     workoutId,
                     date,
-                    exerciseId: exerciseKey(exercise.name),
+                    exerciseId: modelId(exercise),
                     reps,
                     weight: 1,
                     isWarmup: false,
@@ -251,7 +276,13 @@ export function diffRoutines(base: Routine, next: Routine): RoutineChange[] {
                     exerciseId: e.id,
                     label: `${day.name}: added ${e.name} ${describeSets(e)}`,
                 });
-            } else if (old.name !== e.name || old.sets !== e.sets || old.repLow !== e.repLow || old.repHigh !== e.repHigh) {
+            } else if (
+                old.name !== e.name ||
+                old.sets !== e.sets ||
+                old.repLow !== e.repLow ||
+                old.repHigh !== e.repHigh ||
+                old.target !== e.target
+            ) {
                 const what = old.name !== e.name ? `${old.name} → ${e.name}` : e.name;
                 changes.push({
                     kind: "edit",

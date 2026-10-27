@@ -41,6 +41,21 @@ export const SIGMA = 0.25;
 export const SIGMA_ANCHOR = 0.5;
 export const ANCHOR_DRIFT = 0.25;
 
+/**
+ * Every tape change is read as inches per this many weeks, so a 2-week and a
+ * 10-week gap between tapes count the same way. Priors and predictions use it too.
+ */
+export const BLOCK_WEEKS = 4;
+
+/** Past this many direct sets a week on one tape, each extra set costs more than it adds. */
+export const SET_PEAK = 20;
+/** Inches per block lost per (set over the peak)². Fixed, not fitted. */
+export const OVERREACH = 0.002;
+/** Working sets in one session past which every tape trained that day pays a fatigue cost. */
+export const SESSION_SET_CAP = 25;
+/** Inches per block lost per working set over the session cap. Fixed, not fitted. */
+export const SESSION_FATIGUE = 0.01;
+
 export const SET_FLOOR = 6;
 export const SET_CEILING = 20;
 export const TRANSFER_STEPS = [2, 4, 6] as const;
