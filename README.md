@@ -9,8 +9,10 @@ is predicted to do to each tape site (chest, shoulders, arms, forearms, neck, wa
   one row per tape, a breakdown of each change on its own, goals per body part, and suggested next changes.
 - **Body**: dated tape measurements and bodyweight.
 
-The engine (`src/lib/response-model.ts`, `exercise-sites.ts`, `sites.ts`) is copied from `../routine`, with
-the per-person goals replaced by goals the visitor sets. `src/lib/planner.ts` turns saved routine
+**Live:** https://kdi208.github.io/routine-lab/
+
+The engine (`src/lib/response-model.ts`, `exercise-sites.ts`, `sites.ts`) came from a private
+tracker, with the per-person goals replaced by goals the visitor sets. `src/lib/planner.ts` turns saved routine
 versions into the sets the visitor would have logged by following them. Those sets feed the same
 interval/fit code, so the model personalises once two measurements bracket a followed routine.
 
@@ -26,7 +28,11 @@ npm test
 npm run build   # static site in out/
 ```
 
-## Deploy (Vercel)
+## Deploy
 
-New project → import this repo → set **Root Directory** to `routine-lab`. No env vars are needed.
-Any static host also works: serve the `out/` folder.
+Every push to `main` runs `.github/workflows/pages.yml`: tests, lint, a static build, then a GitHub Pages deploy.
+The repository's Pages source must be set to **GitHub Actions** (Settings → Pages).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
